@@ -26,5 +26,7 @@ Description: A tool for producing synthetic versions of microdata containing con
 License: GPL-2 | GPL-3
 URL: <https://www.synthpop.org.uk/>
 Imports: lattice, MASS, methods, nnet, ggplot2, graphics, stats, utils, rpart, party, foreign, plyr, proto, polspline, randomForest, ranger, classInt, mipfp, survival, stringr, rmutil, broman, forcats
+Suggests: GGally, knitr, rmarkdown
+VignetteBuilder: knitr
 Encoding: UTF-8
 LazyData: yes
