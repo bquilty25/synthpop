@@ -1,79 +1,39 @@
-# synthpop
+# synthpop (fork)
 
-R package for generating synthetic versions of sensitive microdata for
-statistical disclosure control.
+This is a fork of [synthpop](https://github.com/bnowok/synthpop), an R
+package for generating synthetic versions of sensitive microdata for
+statistical disclosure control. The upstream package is maintained by
+Beata Nowok and is available on
+[CRAN](https://cran.r-project.org/package=synthpop).
 
-Synthetic data replaces sensitive original values with values drawn from
-conditional distributions fitted to the original data, using parametric
-models or classification and regression trees. Variables are synthesised
-sequentially, each conditioned on those already generated. The result
-preserves the statistical properties of the original while reducing
-disclosure risk.
-
-For a description of the method, see Nowok, Raab and Dibben (2016),
-doi:[10.18637/jss.v074.i11](https://doi.org/10.18637/jss.v074.i11).
+This fork adds a vignette on using `synthpop` to generate synthetic data
+for AI coding agents, and modernises the package's plotting code
+(updated ggplot2 API usage, consistent theming, accessible colour
+palette).
 
 ## Installation
-
-Install the released version from CRAN:
-
-```r
-install.packages("synthpop")
-```
-
-Or install the development version from this repository:
 
 ```r
 # install.packages("remotes")
 remotes::install_github("bquilty25/synthpop")
 ```
 
-## Usage
+## Changes from upstream
 
-```r
-library(synthpop)
+- **New vignette** (`vignettes/agentic-development.qmd`): using
+  synthetic data to develop analysis pipelines with AI coding agents
+  without exposing patient-identifiable data.
+- **Plotting updates**: replaced deprecated `aes_string()` and
+  `eval(parse())` with `.data` pronoun, switched `lwd` to `linewidth`,
+  applied `theme_minimal()` consistently, updated default colour palette.
 
-syn_obj <- syn(mtcars, method = "cart", seed = 2024)
-compare(syn_obj, mtcars)
-```
+## Upstream
 
-`syn()` returns a `synds` object containing the synthetic data in `$syn`.
-`compare()` produces per-variable distribution plots of the real and
-synthetic data.
-
-## Key functions
-
-| Function | Purpose |
-|---|---|
-| `syn()` | Generate synthetic data |
-| `compare()` | Per-variable distribution comparison |
-| `lm.synds()` / `glm.synds()` | Fit models to synthetic data |
-| `compare.fit.synds()` | Compare model coefficients (real vs synthetic) |
-| `utility.gen()` | Propensity score utility measure |
-| `utility.tables()` | Table-based utility measures |
-| `replicated.uniques()` | Check for records matching unique real individuals |
-| `disclosure()` | Identity and attribute disclosure risk |
-| `sdc()` | Remove or replace high-risk synthetic records |
-
-## Vignettes
-
-The package includes vignettes on synthesis, utility, inference,
-disclosure, and using synthetic data with AI coding agents:
-
-```r
-browseVignettes("synthpop")
-```
-
-## Authors
-
-Beata Nowok (maintainer), Gillian M. Raab, Chris Dibben, Joshua Snoke,
-Caspar van Lissa, Lotte Pater.
+- Repository: <https://github.com/bnowok/synthpop>
+- Package website: <https://www.synthpop.org.uk/>
+- Reference: Nowok, Raab and Dibben (2016),
+  doi:[10.18637/jss.v074.i11](https://doi.org/10.18637/jss.v074.i11)
 
 ## Licence
 
 GPL-2 | GPL-3
-
-## Links
-
-- Package website: <https://www.synthpop.org.uk/>
-- CRAN: <https://cran.r-project.org/package=synthpop>
