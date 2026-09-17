@@ -232,13 +232,19 @@ dimnames(result)[[1]] <- paste(ntoc(1:dim(result)[1]),dimnames(result)[[1]] )
       if (attrib.meas %in% c("DCAP","TCAP")) oratt = "CAPd"
       else oratt <- "Dorig"
 
-      attrib.plot <- ggplot(toplot) + 
+      attrib.plot <- ggplot(toplot) +
        geom_point(data = toplot, size=5, aes(colour = .data$measure, shape = .data$measure, x=.data$VALUE, y=.data$name)) +
        xlim(0,100)  +
-        labs(x = "Disclosure measure", y = "", 
+        labs(x = "Disclosure measure", y = "",
          title = "Comparison of attribute disclosure measures",
          subtitle= paste( attrib.meas,"for synthetic data  to",oratt ,"for original data.")) +
-        geom_line(data = toplot, mapping = aes(x=.data$VALUE, y=.data$name), arrow = arrow(length=unit(0.30,"cm"), ends="first", type = "closed"))
+        geom_line(data = toplot, mapping = aes(x=.data$VALUE, y=.data$name), arrow = arrow(length=unit(0.30,"cm"), ends="first", type = "closed")) +
+        scale_colour_manual(values = c("#6680c0", "#fc8d62")) +
+        theme_minimal(base_size = 11) +
+        theme(legend.position = "top",
+              legend.title = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.grid.major = element_line(linewidth = 0.3, colour = "grey90"))
 #cat("line 207------------------------------------------------\n")
 
        res <- list( attrib.table = result, attrib.plot = attrib.plot, keys = keys,

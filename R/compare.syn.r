@@ -12,8 +12,8 @@ compare.synds <- function(object, data, vars = NULL, msel = NULL,
                           nrow = 2, ncol = 2, rel.size.x = 1,
                           utility.stats = c("pMSE", "S_pMSE", "df"),
                           utility.for.plot = "S_pMSE",  
-                          cols = c("#1A3C5A","#4187BF"),
-                          plot = TRUE, table = FALSE, print.flag = TRUE, ...){   
+                          cols = c("#6680c0","#fc8d62"),
+                          plot = TRUE, table = FALSE, print.flag = TRUE, ...){
 
  if (is.null(data)) stop("Requires parameter data to give name of the real data.\n", call. = FALSE)
  if (!is.data.frame(data)) stop("Argument data must be a data frame.\n", call. = FALSE) 
@@ -261,13 +261,17 @@ compare.synds <- function(object, data, vars = NULL, msel = NULL,
    per.fact <- per.fac[per.fac$Variable %in% commonnames_lab[min:max],]
    if (stat == "percents") p <- ggplot(data = per.fact, aes(x = Value, y = Percent, fill = Data))
    else p <- ggplot(data = per.fact, aes(x = Value, y = Count, fill = Data))
-   p <- p + geom_bar(position = "dodge", colour = cols[1], stat = "identity") + 
-      facet_wrap(~ Variable, scales = "free", ncol = ncol)  
-   p <- p + guides(fill = guide_legend(override.aes = list(colour = NULL))) + 
-        theme(axis.text.x = element_text(angle = -30, hjust = 0, vjust = 1, size = rel(rel.size.x)), 
-              legend.position = "top", 
-              legend.key = element_rect(colour = cols[1])) 
-   p <- p + theme(legend.title = element_blank())
+   p <- p + geom_bar(position = "dodge", colour = "white", linewidth = 0.3,
+      stat = "identity") +
+      facet_wrap(~ Variable, scales = "free", ncol = ncol)
+   p <- p + guides(fill = guide_legend(override.aes = list(colour = NULL))) +
+        theme_minimal(base_size = 11) +
+        theme(axis.text.x = element_text(angle = -30, hjust = 0, vjust = 1, size = rel(rel.size.x)),
+              legend.position = "top",
+              legend.title = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.grid.major = element_line(linewidth = 0.3, colour = "grey90"),
+              strip.text = element_text(face = "bold"))
    if (length(msel) > 1) p <- p + scale_fill_manual(values = c(cols[1], rep(cols[2], length(msel))))
    if (length(msel) <= 1) p <- p + scale_fill_manual(values = cols)
    plots[[i]] <- p
@@ -292,7 +296,7 @@ compare.data.frame <- compare.list <- function(object, data, vars = NULL, cont.n
                                    nrow = 2, ncol = 2, rel.size.x = 1,
                                    utility.stats = c("pMSE", "S_pMSE", "df"),
                                    utility.for.plot = "S_pMSE",
-                                   cols = c("#1A3C5A","#4187BF"),   
+                                   cols = c("#6680c0","#fc8d62"),
                                    plot = TRUE, table = FALSE ,print.flag = TRUE,
                                    compare.synorig = TRUE, ...){
   
@@ -444,7 +448,7 @@ dfNA <- function(data, na){
 ###-----compare.fit.synds--------------------------------------------------
 compare.fit.synds <- function(object, data, plot = "Z",
   print.coef = FALSE, return.plot = TRUE, plot.intercept = FALSE, 
-  lwd = 1, lty = 1, lcol = c("#1A3C5A","#4187BF"),
+  lwd = 1, lty = 1, lcol = c("#6680c0","#fc8d62"),
   dodge.height = .5, point.size = 2.5, 
   population.inference = FALSE, ci.level = 0.95, ...) {   # c("#132B43", "#56B1F7")
 
@@ -586,23 +590,25 @@ compare.fit.synds <- function(object, data, plot = "Z",
    
    if (!plot.intercept) modelCI <- modelCI[modelCI$Coefficient != "(Intercept)",]
 
-   CI.geom <- geom_errorbar(aes_string(ymin = "LowCI", ymax = "HighCI",
-     color = "Model", linetype = "Model"), data = modelCI, width = 0, 
-     lwd = lwd, lty = lty, position = position_dodge(width = dodge.height))
+   CI.geom <- geom_errorbar(aes(ymin = .data$LowCI, ymax = .data$HighCI,
+     color = .data$Model, linetype = .data$Model), data = modelCI, width = 0,
+     linewidth = lwd, lty = lty, position = position_dodge(width = dodge.height))
 
-   point.geom <- geom_point(aes_string(#ymin = value, ymax = value,  #BN-03/02/2017 commented
-     color = "Model", shape = "Model"), data = modelCI, 
+   point.geom <- geom_point(aes(
+     color = .data$Model, shape = .data$Model), data = modelCI,
      size = point.size, position = position_dodge(width = dodge.height))
 
-   p <- ggplot(data = modelCI, aes_string(x = "Coefficient", y = "Value"))
-   p <- p + geom_hline(yintercept = 0, colour = "grey", linetype = 2, lwd = 1)
+   p <- ggplot(data = modelCI, aes(x = .data$Coefficient, y = .data$Value))
+   p <- p + geom_hline(yintercept = 0, colour = "grey", linetype = 2, linewidth = 1)
    p <- p + CI.geom + point.geom + labs(title = title, y = xlab)
    p <- p + scale_shape_manual(values = c(17:16), breaks = c("synthetic","observed")) +
             scale_colour_manual(values = lcol[2:1], breaks = c("synthetic", "observed"))
-   p <- p + coord_flip()
-   # p <- p + theme_bw()
-   # scale_colour_manual(values = rev(brewer.pal(3,"Blues")))
-   # scale_colour_grey(start = 0, end = .6)
+   p <- p + coord_flip() +
+     theme_minimal(base_size = 11) +
+     theme(legend.position = "top",
+           legend.title = element_blank(),
+           panel.grid.minor = element_blank(),
+           panel.grid.major = element_line(linewidth = 0.3, colour = "grey90"))
    p
  } else p <- NULL
 

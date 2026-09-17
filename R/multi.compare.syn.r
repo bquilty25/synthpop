@@ -34,7 +34,8 @@ multi.compare <- function(object, data, var = NULL, by = NULL, msel = NULL,
  nplots <- length(bytable) 
  if (nplots > 100) cat("\nCAUTION: You have ", nplots, " sections in your plot.\n")
     
- add <- NULL 
+ add <- NULL
+ playaout <- NULL
  
  # data prep
  #----
@@ -67,29 +68,29 @@ multi.compare <- function(object, data, var = NULL, by = NULL, msel = NULL,
  
  if (is.numeric(data[, var])) {
    if (cont.type == "hist") {
-     p <- ggplot(data = obssyn, aes(x = eval(parse(text = var))))
+     p <- ggplot(data = obssyn, aes(x = .data[[var]]))
      plabs <- labs(x = var, fill = "")
      if (y.hist == "count") {
-       ptype <- geom_histogram(aes(y = after_stat(count), fill = source), 
+       ptype <- geom_histogram(aes(y = after_stat(count), fill = source),
          position = "dodge", binwidth = binwidth)
      } else if (y.hist == "density"){
-       ptype <- geom_histogram(aes(y = after_stat(density), fill = source), 
+       ptype <- geom_histogram(aes(y = after_stat(density), fill = source),
          position = "dodge", binwidth = binwidth)
      }
    } else if (cont.type == "boxplot") {
-     p <- ggplot(data = obssyn, aes(x = source, y = eval(parse(text = var))))
+     p <- ggplot(data = obssyn, aes(x = source, y = .data[[var]]))
      ptype <- geom_boxplot(aes(colour = source), alpha = 0.7)
      plabs <- labs(y = var, x = "", colour = "")
      if (boxplot.point) add <- geom_jitter(size = 0.2, alpha = 0.2)
    }
  } else {
     if (barplot.position == "dodge") {
-      p <- ggplot(data = obssyn, aes(x = eval(parse(text = var))))
+      p <- ggplot(data = obssyn, aes(x = .data[[var]]))
       ptype <- geom_bar(aes(fill = source), position = barplot.position)
-      plabs <- labs(x = var, fill = "")      
+      plabs <- labs(x = var, fill = "")
     } else {
       p <- ggplot(data = obssyn, aes(x = source))
-      ptype <- geom_bar(aes(fill = eval(parse(text = var))), position = barplot.position)
+      ptype <- geom_bar(aes(fill = .data[[var]]), position = barplot.position)
       plabs <- labs(x = "", fill = var)
     }
  }
@@ -97,16 +98,31 @@ multi.compare <- function(object, data, var = NULL, by = NULL, msel = NULL,
  if (length(by) == 1){
    playaout <- facet_wrap(by)   # nrow = 1
  } else if (length(by) > 1) {
-   form <- paste(by[1], "~", paste0(by[-1], collapse = "+"))
-   playaout <- facet_grid(eval(parse(text = form)))
+   form <- as.formula(paste(by[1], "~", paste0(by[-1], collapse = "+")))
+   playaout <- facet_grid(form)
  }
  
  p <- p + add + ptype + playaout + plabs 
  
+ src_levels <- levels(obssyn$source)
+ n_syn <- length(src_levels) - 1
+ src_cols <- c("#6680c0", rep("#fc8d62", n_syn))
+ names(src_cols) <- src_levels
+ if (is.numeric(data[, var]) && cont.type == "boxplot") {
+   p <- p + scale_colour_manual(values = src_cols)
+ } else {
+   p <- p + scale_fill_manual(values = src_cols)
+ }
+ p <- p +
+   theme_minimal(base_size = 11) +
+   theme(legend.position = "top",
+         legend.title = element_blank(),
+         panel.grid.minor = element_blank(),
+         panel.grid.major = element_line(linewidth = 0.3, colour = "grey90"),
+         strip.text = element_text(face = "bold"))
  if (length(msel > 5)) {
    p <- p + theme(axis.text.x = element_text(angle = -30, hjust = 0, vjust = 1))
- } 
- # + scale_fill_brewer(palette = "Set1") + scale_colour_brewer(palette = "Set1")
+ }
  
  return(p)
 }

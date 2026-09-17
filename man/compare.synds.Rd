@@ -22,7 +22,7 @@
         nrow = 2, ncol = 2, rel.size.x = 1,
         utility.stats = c("pMSE", "S_pMSE", "df"),
         utility.for.plot = "S_pMSE",
-        cols = c("#1A3C5A","#4187BF"),
+        cols = c("#6680c0","#fc8d62"),
         plot = TRUE, table = FALSE, 
         print.flag = TRUE, \dots)
 
@@ -31,7 +31,7 @@
         nrow = 2, ncol = 2, rel.size.x = 1,
         utility.stats = c("pMSE", "S_pMSE", "df"),
         utility.for.plot = "S_pMSE",
-        cols = c("#1A3C5A","#4187BF"),
+        cols = c("#6680c0","#fc8d62"),
         plot = TRUE, table = FALSE, 
         print.flag = TRUE, compare.synorig = TRUE, \dots)
 
@@ -40,7 +40,7 @@
         nrow = 2, ncol = 2, rel.size.x = 1,
         utility.stats = c("pMSE", "S_pMSE", "df"),
         utility.for.plot = "S_pMSE",
-        cols = c("#1A3C5A","#4187BF"),
+        cols = c("#6680c0","#fc8d62"),
         plot = TRUE, table = FALSE, 
         print.flag = TRUE, compare.synorig = TRUE, \dots)
 

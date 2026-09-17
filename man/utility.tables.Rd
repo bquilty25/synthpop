@@ -26,7 +26,7 @@
                print.tabs = FALSE, digits.tabs = 4,
                max.scale = NULL, min.scale = 0, plot.title = NULL,
                nworst = 5, ntabstoprint = 0, k.syn = FALSE, 
-               low = "grey92", high = "#E41A1C",
+               low = "grey95", high = "#6680c0",
                n.breaks = NULL, breaks = NULL, print.flag = TRUE, \dots)
                
 \method{utility.tables}{data.frame}(object, data, 
@@ -39,7 +39,7 @@
                print.tabs = FALSE, digits.tabs = 4,
                max.scale = NULL, min.scale = 0, plot.title = NULL,  
                nworst = 5, ntabstoprint = 0, k.syn = FALSE,
-               low = "grey92", high = "#E41A1C",
+               low = "grey95", high = "#6680c0",
                n.breaks = NULL, breaks = NULL, 
                compare.synorig = TRUE, print.flag = TRUE,\dots)
 
@@ -53,7 +53,7 @@
                print.tabs = FALSE, digits.tabs = 4,
                max.scale = NULL, min.scale = 0, plot.title = NULL,  
                nworst = 5, ntabstoprint = 0, k.syn = FALSE,
-               low = "grey92", high = "#E41A1C",
+               low = "grey95", high = "#6680c0",
                n.breaks = NULL, breaks = NULL, 
                compare.synorig = TRUE, print.flag = TRUE,\dots)
 

@@ -19,7 +19,7 @@ utility.tables.data.frame <- utility.tables.list <-
                            print.tabs = FALSE, digits.tabs = 4,
                            max.scale = NULL, min.scale = 0, plot.title = NULL,
                            nworst = 5, ntabstoprint = 0, k.syn = FALSE,
-                           low = "grey92", high = "#E41A1C",
+                           low = "grey95", high = "#6680c0",
                            n.breaks = NULL, breaks = NULL, compare.synorig = TRUE,
                            print.flag = TRUE, ...){
                      if (is.null(data)) stop("Requires parameter 'data' to give name of the real data.\n", call. = FALSE)
@@ -95,7 +95,7 @@ utility.tables.synds <- function(object, data,
                                  print.tabs = FALSE, digits.tabs = 4,
                                  max.scale = NULL, min.scale = 0, plot.title = NULL,
                                  nworst = 5, ntabstoprint = 0, k.syn = FALSE, 
-                                 low = "grey92", high = "#E41A1C",
+                                 low = "grey95", high = "#6680c0",
                                  n.breaks = NULL, breaks = NULL, print.flag = TRUE, ...){
 ###---------------------- checks of input params-------------------------
   
@@ -301,12 +301,11 @@ utility.tables.synds <- function(object, data,
    geom_raster(aes(fill = val)) + 
    plot.scale + 
    labs(x = "", y = "", title = plot.title) +
-   theme_minimal() + 
-   theme(axis.text.x = element_text(size = 10, angle = 90, hjust = 0.9, vjust = 0.2), 
-         axis.text.y = element_text(size = 10, margin = margin(r = 0)),
-         title = element_text(size = 11),
+   theme_minimal(base_size = 11) +
+   theme(axis.text.x = element_text(angle = 90, hjust = 0.9, vjust = 0.2),
+         axis.text.y = element_text(margin = margin(r = 0)),
          legend.title = element_blank(),
-         panel.grid.major = element_blank(), 
+         panel.grid.major = element_blank(),
          panel.grid.minor = element_blank())
  
  res <- list(tabs = tabs,

@@ -15,7 +15,7 @@
 \usage{
 \method{compare}{fit.synds}(object, data, plot = "Z", 
   print.coef = FALSE, return.plot = TRUE, plot.intercept = FALSE, 
-  lwd = 1, lty = 1, lcol = c("#1A3C5A","#4187BF"), 
+  lwd = 1, lty = 1, lcol = c("#6680c0","#fc8d62"), 
   dodge.height = .5, point.size = 2.5,
   population.inference = FALSE, ci.level = 0.95, ...)
 

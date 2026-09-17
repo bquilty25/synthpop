@@ -1,0 +1,517 @@
+---
+title: "Using synthpop to generate synthetic data for agentic coding assistants"
+author: "Billy Quilty"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: false
+    embed-resources: true
+    fig-width: 10
+    fig-height: 8
+    fig-dpi: 150
+execute:
+  warning: false
+  message: false
+vignette: >
+  %\VignetteIndexEntry{Using synthpop to generate synthetic data for agentic coding assistants}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+devtools::load_all(here::here())
+
+col_real <- "#6680c0"
+col_synth <- "#fc8d62"
+
+theme_synth <- ggplot2::theme_minimal(base_size = 11) +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(size = 13, face = "bold"),
+    strip.text = ggplot2::element_text(size = 10, face = "bold"),
+    panel.grid.minor = ggplot2::element_blank(),
+    panel.grid.major = ggplot2::element_line(
+      linewidth = 0.3, colour = "grey90"
+    ),
+    legend.position = "top",
+    legend.title = ggplot2::element_blank()
+  )
+
+cor_text <- function(data, mapping, ...) {
+  x <- GGally::eval_data_col(data, mapping$x)
+  y <- GGally::eval_data_col(data, mapping$y)
+  r <- cor(x, y, use = "complete.obs")
+  ggplot2::ggplot() +
+    ggplot2::annotate("text", x = 0.5, y = 0.5,
+                      label = sprintf("%.2f", r),
+                      size = 3.5) +
+    ggplot2::xlim(0, 1) + ggplot2::ylim(0, 1) +
+    theme_synth +
+    ggplot2::theme(panel.grid.major = ggplot2::element_blank())
+}
+```
+
+## Background
+
+AI coding agents such as Claude Code, GitHub Copilot, and Cursor require
+access to data to develop analysis pipelines. When the data contain
+patient-identifiable records, this poses a problem: the agent transmits
+data to a remote API. Deny rules in the agent's configuration can block
+direct file reads, but shell output, error messages, and script results
+may still expose real values in the conversation context.
+
+One approach is to replace the real data with a synthetic version that
+preserves the schema and statistical properties of the original. The
+pipeline is developed against the synthetic data; the final analysis is
+run on the real data outside the agent.
+
+This vignette demonstrates the relevant `synthpop` functions: synthesis,
+diagnostic comparison, disclosure control, and project integration.
+
+## Synthesising a dataset
+
+`syn()` fits a sequence of conditional models to the real data (one per
+column, in visit-sequence order) and draws new records from those models.
+
+```{r}
+#| warning: true
+#| message: true
+library(synthpop)
+
+syn_mtcars <- syn(mtcars, method = "parametric", seed = 2024)
+```
+
+`synthpop` warns that `mtcars` has fewer observations (32) than the
+recommended minimum of 210 (100 + 10 per variable). The sequential
+conditional models used by `syn()` require enough observations to
+estimate each column's relationship with its predecessors. With too few
+rows relative to columns, the models are unstable and the synthetic data
+may not reproduce the original distributions or correlations reliably.
+Wide datasets (many columns, few rows) are particularly problematic
+because later variables in the visit sequence are conditioned on all
+preceding columns, compounding the estimation difficulty. The diagnostic
+functions shown below are important for detecting these failures.
+
+The result is a `synds` object. The synthetic data frame is stored in `$syn`:
+
+```{r}
+identical(dim(syn_mtcars$syn), dim(mtcars))
+identical(names(syn_mtcars$syn), names(mtcars))
+```
+
+### Preparing categorical variables
+
+`synthpop` warns when numeric columns have 5 or fewer unique values,
+since these are typically categorical. Converting them to factors before
+synthesis ensures they are modelled with logistic or multinomial models
+rather than linear ones, and that synthetic values remain within the
+observed levels.
+
+`numtocat.syn()` does this automatically. Manual conversion is also
+possible:
+
+```{r}
+mtcars_prep <- mtcars
+mtcars_prep$cyl <- factor(mtcars_prep$cyl)
+mtcars_prep$vs <- factor(mtcars_prep$vs)
+mtcars_prep$am <- factor(mtcars_prep$am)
+mtcars_prep$gear <- factor(mtcars_prep$gear)
+
+syn_mtcars_f <- syn(mtcars_prep, method = "parametric", seed = 2024)
+```
+
+The synthetic data retains the correct factor levels:
+
+```{r}
+table(syn_mtcars_f$syn$cyl)
+table(mtcars_prep$cyl)
+```
+
+## Choosing a method
+
+The `method` argument selects the synthesis model. `"parametric"` fits
+linear models for numeric columns and logistic regression for factors;
+it preserves pairwise correlations well and is faster. `"cart"` (the
+default) fits classification and regression trees, which can capture
+non-linear relationships and subgroup structure. Methods can be set
+per column.
+
+```{r}
+syn_param <- syn(mtcars_prep, method = "parametric", seed = 2024)
+syn_cart <- syn(mtcars_prep, method = "cart", seed = 2024)
+```
+
+## Comparing synthetic and real data
+
+### Pairwise comparison
+
+`GGally::ggpairs` overlays real and synthetic data in a pairs matrix.
+The upper triangle contains correlations, the diagonal contains density
+overlays, and the lower triangle contains scatterplots.
+
+```{r}
+#| label: fig-pairwise-mtcars
+#| fig-cap: "Pairwise comparison of real and parametric synthetic mtcars data."
+#| fig-alt: "Pairs matrix of five numeric variables (mpg, cyl, disp, hp, wt). Upper triangle shows correlation coefficients, diagonal shows density overlays, and lower triangle shows scatter plots. Real data in blue, synthetic in orange. Density shapes and correlations are closely matched between real and synthetic."
+#| fig-width: 12
+#| fig-height: 10
+if (requireNamespace("GGally", quietly = TRUE)) {
+  num_plot_cols <- c("mpg", "cyl", "disp", "hp", "wt")
+  real_df <- mtcars[, num_plot_cols]
+  syn_df <- syn_param$syn[, num_plot_cols]
+  syn_df$cyl <- as.numeric(as.character(syn_df$cyl))
+  real_df$.source <- "Real"
+  syn_df$.source <- "Synthetic"
+  combined <- rbind(real_df, syn_df)
+  combined$.source <- factor(combined$.source,
+                             levels = c("Real", "Synthetic"))
+
+  GGally::ggpairs(
+    combined,
+    columns = seq_along(num_plot_cols),
+    mapping = ggplot2::aes(colour = .source, alpha = .source),
+    upper = list(continuous = "cor"),
+    lower = list(
+      continuous = GGally::wrap("points", size = 1)
+    ),
+    diag = list(
+      continuous = GGally::wrap("densityDiag", alpha = 0.4)
+    ),
+    title = "Real vs Synthetic: Pairwise Comparison",
+    progress = FALSE,
+    legend = c(3, 5)
+  ) +
+    ggplot2::scale_colour_manual(
+      values = c(Real = col_real, Synthetic = col_synth)
+    ) +
+    ggplot2::scale_fill_manual(
+      values = c(Real = col_real, Synthetic = col_synth)
+    ) +
+    ggplot2::scale_alpha_manual(
+      values = c(Real = 0.6, Synthetic = 0.6), guide = "none"
+    ) +
+    theme_synth
+}
+```
+
+For mixed-type data (numeric and factor columns), the pairs matrix
+substitutes boxplots and bar charts where appropriate:
+
+```{r}
+#| label: fig-pairwise-iris
+#| fig-cap: "Pairwise comparison of real and CART synthetic iris data, including the factor variable Species."
+#| fig-alt: "Pairs matrix of four numeric iris measurements and Species. Scatter plots in the lower triangle show real and synthetic points overlaid with similar cluster separation. Density curves on the diagonal are closely matched. Boxplots show comparable distributions across species groups."
+#| fig-width: 12
+#| fig-height: 10
+syn_iris <- syn(iris, method = "cart", seed = 2024)
+
+if (requireNamespace("GGally", quietly = TRUE)) {
+  real_ir <- iris
+  syn_ir <- syn_iris$syn
+  real_ir$Source <- "Real"
+  syn_ir$Source <- "Synthetic"
+  combined_ir <- rbind(real_ir, syn_ir)
+  combined_ir$Source <- factor(combined_ir$Source, levels = c("Real", "Synthetic"))
+
+  GGally::ggpairs(
+    combined_ir,
+    columns = 1:5,
+    mapping = ggplot2::aes(colour = Source, alpha = Source),
+    upper = list(continuous = cor_text,
+                 combo = "blank", discrete = "blank"),
+    lower = list(
+      continuous = GGally::wrap("points", size = 1),
+      combo = GGally::wrap("box_no_facet")
+    ),
+    diag = list(continuous = GGally::wrap("densityDiag", alpha = 0.4)),
+    title = "Real vs Synthetic: iris (CART)",
+    progress = FALSE,
+    legend = c(1, 1)
+  ) +
+    ggplot2::scale_colour_manual(values = c(Real = col_real, Synthetic = col_synth)) +
+    ggplot2::scale_fill_manual(values = c(Real = col_real, Synthetic = col_synth)) +
+    ggplot2::scale_alpha_manual(values = c(Real = 0.6, Synthetic = 0.6), guide = "none") +
+    theme_synth
+}
+```
+
+### Per-variable comparison
+
+`compare()` produces dodged bar charts for each variable, with the
+$S_{pMSE}$ utility statistic printed in each panel title.
+
+```{r}
+#| label: fig-compare-mtcars
+#| fig-cap: "Per-variable distribution comparison for parametric synthetic mtcars data."
+#| fig-alt: "Faceted dodged bar chart with one panel per variable. Each panel shows observed and synthetic bars side by side. Most variables show close agreement between real and synthetic distributions."
+#| fig-height: 10
+compare(syn_param, mtcars_prep)
+```
+
+The same comparison for iris synthesised with CART:
+
+```{r}
+#| label: fig-compare-iris
+#| fig-cap: "Per-variable distribution comparison for CART synthetic iris data."
+#| fig-alt: "Faceted dodged bar chart comparing observed and synthetic iris data across five variables. Bar heights are closely matched. The Species panel shows near-identical proportions across the three levels."
+#| fig-height: 8
+compare(syn_iris, iris)
+```
+
+### Handling missingness
+
+`synthpop` preserves missingness patterns. The `airquality` dataset has
+`NA` values in `Ozone` and `Solar.R`:
+
+```{r}
+#| label: fig-compare-airquality
+#| fig-cap: "Per-variable distribution comparison for parametric synthetic airquality data, including missing values."
+#| fig-alt: "Faceted dodged bar chart for six airquality variables. Ozone and Solar.R panels include an NA category with similar proportions in real and synthetic data."
+#| fig-height: 6
+syn_aq <- syn(airquality, method = "parametric", seed = 2024)
+compare(syn_aq, airquality)
+```
+
+```{r}
+na_comparison <- data.frame(
+  column = names(airquality),
+  real_na = colSums(is.na(airquality)),
+  synthetic_na = colSums(is.na(syn_aq$syn))
+)
+na_comparison[na_comparison$real_na > 0, ]
+```
+
+### Utility measures
+
+`utility.gen()` trains a classifier to distinguish real from synthetic
+records. `S_pMSE` is the propensity-score mean squared error standardised
+by its null expectation; values near 1 indicate the classifier performs
+no better than it would on a random split. `SPECKS` is the
+Kolmogorov-Smirnov statistic on the propensity scores (0 =
+indistinguishable, 0.5 = maximally distinguishable).
+
+```{r}
+ug_param <- utility.gen(syn_param, mtcars_prep, print.flag = FALSE)
+ug_cart <- utility.gen(syn_cart, mtcars_prep, print.flag = FALSE)
+
+data.frame(
+  method = c("Parametric", "CART"),
+  pMSE = round(c(ug_param$pMSE, ug_cart$pMSE), 4),
+  S_pMSE = round(c(ug_param$S_pMSE, ug_cart$S_pMSE), 2),
+  SPECKS = round(c(ug_param$SPECKS, ug_cart$SPECKS), 3)
+)
+```
+
+### Correlation preservation
+
+`synthpop` does not include a built-in correlation comparison. The mean
+and maximum absolute differences in pairwise correlations can be computed
+directly:
+
+```{r}
+num_cols <- names(mtcars_prep)[sapply(mtcars_prep, is.numeric)]
+cor_real <- cor(mtcars_prep[num_cols], use = "complete.obs")
+cor_param <- cor(syn_param$syn[num_cols], use = "complete.obs")
+cor_cart <- cor(syn_cart$syn[num_cols], use = "complete.obs")
+
+idx <- lower.tri(cor_real)
+
+data.frame(
+  method = c("Parametric", "CART"),
+  mean_abs_diff = round(c(
+    mean(abs(cor_real[idx] - cor_param[idx])),
+    mean(abs(cor_real[idx] - cor_cart[idx]))
+  ), 3),
+  max_abs_diff = round(c(
+    max(abs(cor_real[idx] - cor_param[idx])),
+    max(abs(cor_real[idx] - cor_cart[idx]))
+  ), 3)
+)
+```
+
+### Comparing model fits
+
+`lm.synds()` fits a linear model to the synthetic data. `compare()` then
+plots the coefficients alongside the real-data fit. Overlapping confidence
+intervals indicate the synthetic data preserves the modelled relationships.
+
+```{r}
+#| label: fig-compare-fit
+#| fig-cap: "Coefficient comparison for a linear model (mpg ~ wt + hp + cyl) fitted to real and synthetic data."
+#| fig-alt: "Horizontal dot-and-whisker plot comparing regression coefficients from observed and synthetic linear models. Each coefficient has a point estimate and 95% confidence interval. The intervals overlap for all coefficients."
+#| fig-width: 8
+#| fig-height: 5
+fit_syn <- lm.synds(mpg ~ wt + hp + cyl, data = syn_param)
+compare(fit_syn, mtcars_prep)
+```
+
+## Disclosure control
+
+### Replicated uniques
+
+A replicated unique is a synthetic record that matches a unique real
+record on all columns. These represent the most direct re-identification
+risk.
+
+```{r}
+ru_param <- replicated.uniques(syn_param, mtcars_prep)
+ru_cart <- replicated.uniques(syn_cart, mtcars_prep)
+
+data.frame(
+  method = c("Parametric", "CART"),
+  replicated_uniques = c(
+    ru_param$res_tab["Replicated uniques", "Number"],
+    ru_cart$res_tab["Replicated uniques", "Number"]
+  ),
+  total_records = nrow(mtcars_prep)
+)
+```
+
+CART tends to produce more replicated uniques because tree leaves can
+reproduce small groups of records. This is more pronounced in datasets
+with well-separated clusters:
+
+```{r}
+ru_iris <- replicated.uniques(syn_iris, iris)
+
+data.frame(
+  dataset = "iris (CART)",
+  replicated_uniques = ru_iris$res_tab["Replicated uniques", "Number"],
+  total_records = nrow(iris),
+  pct = round(ru_iris$res_tab["Replicated uniques", "%"], 1)
+)
+```
+
+### Identity and attribute disclosure
+
+`disclosure()` quantifies whether knowing a set of quasi-identifier
+columns (keys) allows an attacker to identify an individual or infer a
+sensitive attribute:
+
+```{r}
+disc <- disclosure(syn_param, mtcars_prep,
+                   keys = c("cyl", "hp", "wt"), target = "mpg")
+```
+
+```{r}
+data.frame(
+  measure = c("Identity disclosure (%)", "Attribute disclosure (%)"),
+  baseline = round(c(disc$ident[1, 1], disc$attrib[1, 1]), 1),
+  synthetic = round(c(disc$ident[2, 1], disc$attrib[2, 1]), 1)
+)
+```
+
+Synthetic disclosure rates well below the baseline indicate low risk.
+
+### Removing high-risk records
+
+`sdc()` removes or replaces replicated uniques:
+
+```{r}
+syn_iris_sdc <- sdc(syn_iris, iris, rm.replicated.uniques = TRUE)
+ru_after <- replicated.uniques(syn_iris_sdc, iris)
+
+data.frame(
+  stage = c("Before SDC", "After SDC"),
+  replicated_uniques = c(
+    ru_iris$res_tab["Replicated uniques", "Number"],
+    ru_after$res_tab["Replicated uniques", "Number"]
+  )
+)
+```
+
+## Data governance considerations
+
+Synthetic data is not anonymised data. The following should be addressed
+before sending synthetic data to an external API.
+
+**Individual-level risk.** Direct identifiers (names, addresses, NHS
+numbers, dates of birth) must be removed before synthesis.
+`replicated.uniques()` and `disclosure()` should be run on the output,
+and `sdc()` used to remove any replicated uniques.
+
+**Population-level risk.** Synthetic data preserves the joint
+distributions and correlations of the original cohort. For large
+datasets on common conditions, this is unlikely to be sensitive. For
+small or rare-disease cohorts at a named institution, the statistical
+structure itself may be sensitive: a synthetic dataset that preserves the
+relationship between genotype and outcome for 12 patients carries the
+same information as the real data for anyone who knows the cohort exists.
+Synthesis does not resolve the governance problem in such cases. As a
+rule of thumb, if you would be comfortable sharing detailed summary
+statistics and cross-tabulations with the API, the synthetic data is
+comparable in information content.
+
+**What your DPO needs to see.** A description of the synthesis method,
+confirmation that identifiers were removed, the `replicated.uniques()`
+and `disclosure()` output, the data processor's retention and
+training-use policies, and a documented risk assessment.
+
+## Integration into an analysis workflow
+
+### Generation script
+
+Run this outside the agent, in a regular R session with access to the
+real data:
+
+```r
+# scripts/00_generate_synthetic.R
+library(here)
+library(synthpop)
+library(readr)
+
+raw_dir <- here("data", "raw")
+syn_dir <- here("data", "synthetic")
+if (!dir.exists(syn_dir)) dir.create(syn_dir, recursive = TRUE)
+
+for (file in list.files(raw_dir, pattern = "\\.csv$", full.names = TRUE)) {
+  real <- read_csv(file, show_col_types = FALSE)
+  result <- syn(as.data.frame(real), method = "parametric", seed = 2024)
+
+  ru <- replicated.uniques(result, as.data.frame(real))
+  if (ru$res_tab["Replicated uniques", "Number"] > 0) {
+    result <- sdc(result, as.data.frame(real), rm.replicated.uniques = TRUE)
+  }
+
+  write_csv(result$syn, file.path(syn_dir, basename(file)))
+}
+```
+
+### Switching between synthetic and real data
+
+An environment variable controls which data directory is used, with the
+safe default being synthetic:
+
+```r
+use_synthetic <- toupper(Sys.getenv("SYNTHETIC_DATA", "TRUE")) %in%
+  c("TRUE", "1", "YES", "")
+
+data_dir <- if (use_synthetic) {
+  here::here("data", "synthetic")
+} else {
+  here::here("data", "raw")
+}
+```
+
+To run on real data:
+
+```bash
+SYNTHETIC_DATA=false Rscript scripts/00_run_pipeline.R
+```
+
+## Summary
+
+| synthpop function | Purpose |
+|---|---|
+| `syn()` | Generate synthetic data |
+| `compare()` | Per-variable distribution comparison |
+| `lm.synds()` / `glm.synds()` | Fit models to synthetic data |
+| `compare.fit.synds()` | Compare model fits (real vs synthetic) |
+| `utility.gen()` | Propensity score utility measure |
+| `replicated.uniques()` | Check for records matching unique real individuals |
+| `disclosure()` | Identity and attribute disclosure risk |
+| `sdc()` | Remove or replace high-risk synthetic records |
