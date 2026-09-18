@@ -74,8 +74,42 @@ diagnostic comparison, disclosure control, and project integration.
 
 ## Synthesising a dataset
 
-`syn()` fits a sequence of conditional models to the real data (one per
-column, in visit-sequence order) and draws new records from those models.
+`syn()` generates synthetic records by decomposing the joint distribution
+of the data into a chain of conditional distributions, one per column.
+No domain-specific model (such as a transmission model) is needed: the
+associations are learned empirically from the data itself.
+
+The procedure works as follows. Given columns $X_1, X_2, \ldots, X_p$
+in a specified visit sequence:
+
+1. $X_1$ is sampled from its marginal distribution in the real data.
+2. $X_2$ is drawn from a model of $X_2 \mid X_1^{\text{syn}}$, fitted
+   to the real data.
+3. $X_3$ is drawn from a model of $X_3 \mid X_1^{\text{syn}},
+   X_2^{\text{syn}}$, and so on.
+4. Each subsequent column is synthesised conditional on all previously
+   synthesised columns.
+
+Because each column is modelled conditional on its predecessors, the
+pairwise and higher-order associations between variables are preserved
+through the chain of conditionals. This is a factorisation of the joint
+distribution $P(X_1, \ldots, X_p) = P(X_1) \cdot P(X_2 \mid X_1)
+\cdot P(X_3 \mid X_1, X_2) \cdots$, which holds for any joint
+distribution regardless of the underlying data-generating process.
+
+The conditional models can be parametric (linear regression for
+continuous columns, logistic regression for factors) or non-parametric
+(CART, random forests). CART is particularly effective at capturing
+non-linear associations and interactions without specifying them in
+advance: if two variables interact in the real data, the tree will split
+on them and the synthetic data will reproduce the interaction.
+
+The practical implication is that if, for example, viral load at day 5
+is correlated with vaccination status and age in the real data, the
+conditional model for day 5 viral load is fitted with vaccination status
+and age (and all other preceding columns) as predictors. The synthetic
+day-5 values will exhibit the same conditional relationships, without
+any epidemiological model being specified.
 
 ```{r}
 #| warning: true
