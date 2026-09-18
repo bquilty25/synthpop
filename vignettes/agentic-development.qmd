@@ -424,6 +424,387 @@ data.frame(
 )
 ```
 
+## Longitudinal and panel data
+
+`synthpop` operates on a single data frame: one row per record, one
+column per variable. Longitudinal data, where each individual
+contributes multiple timepoints, does not fit this layout directly.
+Three strategies are available, each with different trade-offs between
+fidelity, speed, and scalability.
+
+### Simulated cohort
+
+The examples below use a simulated cohort of 500 individuals observed
+over 30 days, with a viral load trajectory that depends on age and
+vaccination status.
+
+```{r}
+#| label: longitudinal-data
+set.seed(42)
+
+n_individuals <- 500
+n_timepoints <- 30
+
+pop <- data.frame(
+  id = 1:n_individuals,
+  age = round(rnorm(n_individuals, mean = 45, sd = 15)),
+  sex = factor(sample(c("M", "F"), n_individuals, replace = TRUE)),
+  vaccinated = factor(sample(c(0, 1), n_individuals, replace = TRUE,
+                             prob = c(0.4, 0.6)))
+)
+
+generate_vl <- function(age, vaccinated) {
+  peak_day <- rnorm(1, mean = 5, sd = 1.2)
+  peak_vl <- rnorm(1, mean = 7.5 - 0.8 * vaccinated - 0.01 * age, sd = 0.5)
+  decay_rate <- rnorm(1, mean = 0.3 + 0.1 * vaccinated, sd = 0.05)
+  growth_rate <- rnorm(1, mean = 1.2, sd = 0.2)
+  days <- 1:n_timepoints
+  vl <- peak_vl - growth_rate * pmax(0, peak_day - days) -
+    decay_rate * pmax(0, days - peak_day)
+  pmax(0, vl + rnorm(n_timepoints, 0, 0.3))
+}
+
+vl_list <- mapply(generate_vl, pop$age, as.integer(as.character(pop$vaccinated)),
+                  SIMPLIFY = FALSE)
+vl_long <- do.call(rbind, lapply(seq_along(vl_list), function(i) {
+  data.frame(id = i, day = 1:n_timepoints, vl = vl_list[[i]])
+}))
+vl_long <- merge(vl_long, pop, by = "id")
+```
+
+Two derived objects are used throughout: a wide version (one row per
+individual, one column per day) and a helper function that computes the
+mean within-individual lag-1 autocorrelation, which measures how well
+the synthetic data preserves temporal dependence.
+
+```{r}
+#| label: longitudinal-helpers
+vl_wide <- reshape(
+  vl_long[, c("id", "day", "vl", "age", "sex", "vaccinated")],
+  direction = "wide", idvar = c("id", "age", "sex", "vaccinated"),
+  timevar = "day", v.names = "vl"
+)
+names(vl_wide) <- sub("^vl\\.", "vl_day", names(vl_wide))
+
+lag1_autocor <- function(long_df) {
+  ids <- unique(long_df$id)
+  cors <- vapply(ids, function(i) {
+    x <- long_df$vl[long_df$id == i]
+    x <- x[order(long_df$day[long_df$id == i])]
+    cor(x[-length(x)], x[-1], use = "complete.obs")
+  }, numeric(1))
+  mean(cors, na.rm = TRUE)
+}
+
+real_lag1 <- lag1_autocor(vl_long)
+```
+
+### Strategy 1: Wide format
+
+Pivoting to wide format so that each individual occupies one row is the
+most direct approach. Each timepoint becomes a column, and the
+sequential conditional models in `syn()` capture the temporal
+correlations as cross-column dependencies.
+
+```{r}
+#| label: longitudinal-wide
+wide_df <- vl_wide[, setdiff(names(vl_wide), "id")]
+
+t_wide <- system.time({
+  syn_wide <- syn(wide_df, method = "cart", seed = 2024)
+})
+
+syn_wide_long <- reshape(
+  syn_wide$syn, direction = "long",
+  varying = grep("^vl_day", names(syn_wide$syn), value = TRUE),
+  v.names = "vl", timevar = "day", idvar = "syn_id"
+)
+syn_wide_long$id <- syn_wide_long$syn_id
+
+cat("Time:", round(t_wide["elapsed"], 1), "s\n")
+cat("Lag-1 autocorrelation - real:", round(real_lag1, 3),
+    " synthetic:", round(lag1_autocor(syn_wide_long), 3), "\n")
+```
+
+This preserves temporal structure well because adjacent columns are
+highly correlated and CART splits on them effectively. The limitation is
+column count: with $T$ timepoints and $p$ baseline covariates, the data
+frame has $p + T$ columns. `syn()` conditions each column on all
+preceding ones, so the model complexity grows quadratically with $T$.
+For moderate $T$ (up to a few dozen timepoints), this works. For
+hundreds of timepoints, the synthesis becomes slow or unstable.
+
+### Strategy 2: Wide format with parametric method
+
+Replacing `method = "cart"` with `method = "parametric"` fits linear
+regression (for numeric columns) rather than trees. Linear models handle
+many predictors more gracefully and run faster, at the cost of assuming
+linear relationships between columns.
+
+```{r}
+#| label: longitudinal-parametric
+t_param <- system.time({
+  syn_param_wide <- syn(wide_df, method = "parametric", seed = 2024)
+})
+
+syn_pw_long <- reshape(
+  syn_param_wide$syn, direction = "long",
+  varying = grep("^vl_day", names(syn_param_wide$syn), value = TRUE),
+  v.names = "vl", timevar = "day", idvar = "syn_id"
+)
+syn_pw_long$id <- syn_pw_long$syn_id
+
+cat("Time:", round(t_param["elapsed"], 1), "s\n")
+cat("Lag-1 autocorrelation - real:", round(real_lag1, 3),
+    " synthetic:", round(lag1_autocor(syn_pw_long), 3), "\n")
+```
+
+For longitudinal data with smooth trajectories, parametric synthesis
+performs comparably to CART at a fraction of the time. It is the
+recommended starting point when the number of timepoints is large
+relative to the number of individuals.
+
+### Strategy 3: Two-stage synthesis
+
+When the wide format is too large, an alternative is to summarise each
+individual's trajectory into a small number of parameters (peak value,
+peak timing, area under the curve), synthesise those summaries alongside
+the baseline covariates, and then reconstruct timepoints from the
+synthetic summaries.
+
+```{r}
+#| label: longitudinal-twostage
+traj_summaries <- do.call(rbind, lapply(split(vl_long, vl_long$id), function(d) {
+  data.frame(
+    id = d$id[1],
+    vl_peak = max(d$vl),
+    vl_peak_day = d$day[which.max(d$vl)],
+    vl_mean = mean(d$vl),
+    vl_last = d$vl[nrow(d)]
+  )
+}))
+
+baseline_summ <- merge(pop[, setdiff(names(pop), "id"), drop = FALSE],
+                       traj_summaries[, setdiff(names(traj_summaries), "id")],
+                       by = "row.names")[, -1]
+
+t_twostage <- system.time({
+  syn_summ <- syn(baseline_summ, method = "cart", seed = 2024)
+})
+
+reconstruct_trajectory <- function(peak_vl, peak_day, n_days) {
+  peak_day <- max(1, min(peak_day, n_days))
+  growth <- peak_vl / peak_day
+  decay <- peak_vl / (n_days - peak_day + 1)
+  days <- 1:n_days
+  vl <- ifelse(days <= peak_day,
+               growth * days,
+               peak_vl - decay * (days - peak_day))
+  pmax(0, vl + rnorm(n_days, 0, 0.3))
+}
+
+set.seed(99)
+syn_traj_long <- do.call(rbind, lapply(seq_len(nrow(syn_summ$syn)), function(i) {
+  row <- syn_summ$syn[i, ]
+  data.frame(
+    id = i, day = 1:n_timepoints,
+    vl = reconstruct_trajectory(row$vl_peak, row$vl_peak_day, n_timepoints)
+  )
+}))
+
+cat("Time:", round(t_twostage["elapsed"], 1), "s\n")
+cat("Lag-1 autocorrelation - real:", round(real_lag1, 3),
+    " synthetic:", round(lag1_autocor(syn_traj_long), 3), "\n")
+```
+
+The two-stage approach is fast and scales to any number of timepoints,
+because the data frame passed to `syn()` has only a handful of columns
+regardless of $T$. The trade-off is that the reconstructed trajectories
+are simplified: the parametric reconstruction imposes a shape (here, a
+linear rise and decay) that may not match the real trajectories. For the
+purpose of developing an analysis pipeline against synthetic data, this
+is often acceptable. The reconstruction function should be chosen to
+match the expected shape of the real data.
+
+### Comparison
+
+```{r}
+#| label: fig-longitudinal-comparison
+#| fig-cap: "Within-individual lag-1 autocorrelation and runtime for three longitudinal synthesis strategies."
+#| fig-alt: "Bar chart comparing three strategies (wide CART, wide parametric, two-stage) on lag-1 autocorrelation and runtime. Wide formats preserve autocorrelation near the real value of 0.95. Two-stage is slightly lower at 0.93 but faster."
+#| fig-width: 10
+#| fig-height: 5
+strategies <- data.frame(
+  strategy = c("Real data", "Wide (CART)", "Wide (parametric)", "Two-stage"),
+  lag1 = c(
+    real_lag1,
+    lag1_autocor(syn_wide_long),
+    lag1_autocor(syn_pw_long),
+    lag1_autocor(syn_traj_long)
+  ),
+  time = c(0, t_wide["elapsed"], t_param["elapsed"], t_twostage["elapsed"])
+)
+
+par(mfrow = c(1, 2), mar = c(5, 8, 3, 1))
+
+barplot(
+  strategies$lag1, names.arg = strategies$strategy,
+  horiz = TRUE, las = 1, col = c("grey70", col_real, col_real, col_synth),
+  xlab = "Lag-1 autocorrelation",
+  main = "Temporal fidelity", xlim = c(0, 1)
+)
+abline(v = real_lag1, lty = 2, col = "grey40")
+
+barplot(
+  strategies$time[-1], names.arg = strategies$strategy[-1],
+  horiz = TRUE, las = 1, col = c(col_real, col_real, col_synth),
+  xlab = "Seconds",
+  main = "Runtime"
+)
+```
+
+### Individual trajectories
+
+Plotting a sample of individual trajectories from the real and synthetic
+data (using the wide-format CART synthesis) shows whether the synthetic
+records reproduce realistic trajectory shapes.
+
+```{r}
+#| label: fig-longitudinal-trajectories
+#| fig-cap: "Sample of 20 individual viral load trajectories from the real and wide-format CART synthetic data."
+#| fig-alt: "Line plot showing 20 real trajectories in blue and 20 synthetic trajectories in orange. Both sets show a rise to a peak around day 5 followed by a gradual decline, with similar spread and shape."
+#| fig-width: 10
+#| fig-height: 6
+set.seed(1)
+sample_real <- vl_long[vl_long$id %in% sample(unique(vl_long$id), 20), ]
+sample_real$source <- "Real"
+
+sample_syn <- syn_wide_long[
+  syn_wide_long$id %in% sample(unique(syn_wide_long$id), 20),
+]
+sample_syn$source <- "Synthetic"
+
+plot_cols <- c("id", "day", "vl", "source")
+plot_data <- rbind(sample_real[, plot_cols], sample_syn[, plot_cols])
+
+plot(NULL, xlim = c(1, n_timepoints), ylim = range(plot_data$vl),
+     xlab = "Day", ylab = "Viral load (log10 copies/mL)",
+     main = "Individual trajectories: real vs synthetic (wide CART)")
+
+for (src in c("Real", "Synthetic")) {
+  col <- if (src == "Real") col_real else col_synth
+  sub <- plot_data[plot_data$source == src, ]
+  for (i in unique(sub$id)) {
+    d <- sub[sub$id == i, ]
+    d <- d[order(d$day), ]
+    lines(d$day, d$vl, col = adjustcolor(col, alpha.f = 0.5))
+  }
+}
+legend("topright", legend = c("Real", "Synthetic"),
+       col = c(col_real, col_synth), lwd = 2, bty = "n")
+```
+
+### Mean trajectory by vaccination status
+
+Averaging across individuals within each vaccination group reveals
+whether the synthesis preserves the group-level treatment effect.
+
+```{r}
+#| label: fig-longitudinal-mean-vax
+#| fig-cap: "Mean viral load trajectory by vaccination status for real and wide-format CART synthetic data."
+#| fig-alt: "Line plot with four lines: real vaccinated, real unvaccinated, synthetic vaccinated, and synthetic unvaccinated. Unvaccinated groups peak higher than vaccinated groups. Real and synthetic lines are closely matched within each group."
+#| fig-width: 10
+#| fig-height: 6
+mean_by_vax <- function(long_df, vacc_col = "vaccinated") {
+  vacc_vals <- unique(long_df[[vacc_col]])
+  do.call(rbind, lapply(vacc_vals, function(v) {
+    sub <- long_df[long_df[[vacc_col]] == v, ]
+    agg <- aggregate(vl ~ day, data = sub, FUN = mean)
+    agg$vaccinated <- v
+    agg
+  }))
+}
+
+mean_real <- mean_by_vax(vl_long)
+mean_real$source <- "Real"
+
+syn_wide_long$vaccinated <- rep(
+  as.character(syn_wide$syn$vaccinated),
+  each = n_timepoints
+)
+mean_syn <- mean_by_vax(syn_wide_long)
+mean_syn$source <- "Synthetic"
+
+mean_data <- rbind(mean_real, mean_syn)
+
+plot(NULL, xlim = c(1, n_timepoints), ylim = range(mean_data$vl),
+     xlab = "Day", ylab = "Mean viral load (log10 copies/mL)",
+     main = "Mean trajectory by vaccination status")
+
+vacc_levels <- unique(mean_data$vaccinated)
+lty_map <- setNames(seq_along(vacc_levels), vacc_levels)
+
+for (src in c("Real", "Synthetic")) {
+  col <- if (src == "Real") col_real else col_synth
+  for (v in vacc_levels) {
+    sub <- mean_data[mean_data$source == src &
+                       mean_data$vaccinated == v, ]
+    sub <- sub[order(sub$day), ]
+    lines(sub$day, sub$vl, col = col, lwd = 2,
+          lty = lty_map[as.character(v)])
+  }
+}
+legend("topright",
+       legend = c("Real - unvacc", "Real - vacc",
+                  "Synthetic - unvacc", "Synthetic - vacc"),
+       col = rep(c(col_real, col_synth), each = 2),
+       lty = rep(1:2, 2), lwd = 2, bty = "n")
+```
+
+### What does not work
+
+Two approaches that appear natural tend to fail in practice.
+
+**Synthesising in long format** (one row per individual-timepoint)
+destroys within-individual correlation. `syn()` treats each row as
+independent, so the temporal ordering within an individual is lost. The
+lag-1 autocorrelation drops sharply:
+
+```{r}
+#| label: longitudinal-long-naive
+long_df <- vl_long[, c("age", "sex", "vaccinated", "day", "vl")]
+syn_long_naive <- syn(long_df, method = "cart", seed = 2024)
+
+syn_long_naive_df <- syn_long_naive$syn
+syn_long_naive_df$id <- rep(1:(nrow(syn_long_naive_df) %/% n_timepoints),
+                            each = n_timepoints)[seq_len(nrow(syn_long_naive_df))]
+
+cat("Lag-1 autocorrelation - real:", round(real_lag1, 3),
+    " long-format synthetic:", round(lag1_autocor(syn_long_naive_df), 3), "\n")
+```
+
+**Looping over cluster units** (synthesising each cluster or individual
+separately in wide format) splits the data into subsets that are often
+too small for the number of columns. `syn()` warns when $n < 100 + 10p$,
+and with many timepoint columns each subset will fall well below that
+threshold. The synthesis is unstable, slow in aggregate, and may exhaust
+memory for large cohorts because each call builds its own tree ensemble.
+
+### Recommendations
+
+For longitudinal data with up to a few dozen timepoints, pivot to wide
+format and use `method = "parametric"`. It is fast, stable, and
+preserves within-individual temporal structure well.
+
+For data with many timepoints or very wide covariate sets, use the
+two-stage approach: synthesise trajectory summaries alongside baseline
+covariates, then reconstruct the time series. Choose summary parameters
+and a reconstruction function that match the expected shape of the
+real trajectories.
+
+Do not synthesise in long format (it destroys temporal dependence) or
+loop over individuals or small clusters (it is slow and unstable).
+
 ## Data governance considerations
 
 Synthetic data is not anonymised data. The following should be addressed
